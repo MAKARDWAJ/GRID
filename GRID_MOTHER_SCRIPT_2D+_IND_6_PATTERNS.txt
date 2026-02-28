@@ -1,0 +1,568 @@
+#!MOTHER SCRIPT WITH  INDIVIUAL CODES OF 6 PATTERNS  DTD 28-02-2026
+# GRID PART 3 - COMPLETE PATTERN DETECTOR v14 (6 PATTERNS)
+# ( CACHE PROBLEM EXISTS)
+# Author: Tejas Naidu - Data Pattern Master
+
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import gc
+import sys
+
+# ========== INITIALIZATION ==========
+gc.collect()
+
+# ========== CONFIGURATION ==========
+excel_files = {
+    "K": r"D:\\TM_HM\\K\\KG.xlsx",
+    # "M": r"D:\\TM_HM\\M\\MG.xlsx"
+}
+
+groups = {
+    "U": (2, 7),      # C:H (6 columns)
+    "L": (10, 15),    # K:P (6 columns)  
+    "P": (18, 23),    # S:X (6 columns)
+    "M": (26, 31),    # AA:AF (6 columns)
+    "OP": (34, 39),   # AI:AN (6 columns)
+    "OM": (42, 47)    # AQ:AV (6 columns)
+}
+
+pattern = [1, 2, 3]
+reverse_pattern = [3, 2, 1]
+ROWS_TO_MATCH = 30
+DATA_START_ROW = 3
+
+print(f"🔍 Scanning patterns: {pattern} + {reverse_pattern}")
+print(f"📊 Processing {len(excel_files)} files, {len(groups)} groups each\n")
+
+# ========== CORE UTILITY FUNCTIONS ==========
+def is_numeric(val):
+    """Detect numeric values (skip dates, SR.NO, NaN)."""
+    if pd.isna(val): return False
+    if isinstance(val, (pd.Timestamp, datetime)): return False
+    if isinstance(val, str):
+        val_str = str(val).strip()
+        if '-' in val_str and len(val_str) <= 5: return False
+        if val_str.upper() in ['SR.NO', 'SR NO', 'SRNO']: return False
+        try: 
+            float(val)
+            return True
+        except: 
+            return False
+    return isinstance(val, (int, float, np.integer, np.floating))
+
+def safe_int(val):
+    """Convert to int safely (return None for invalid)."""
+    if isinstance(val, (pd.Timestamp, datetime)): return None
+    try: 
+        return int(float(val))
+    except: 
+        return None
+
+def excel_coord(row_idx, col_idx):
+    """Convert 0-indexed to Excel A1 notation."""
+    col_letter = ''
+    col = col_idx
+    while col >= 0:
+        col_letter = chr(ord('A') + (col % 26)) + col_letter
+        col = col // 26 - 1
+    return f"{col_letter}{row_idx + 1}"
+
+# ========== DIRECTIONS ==========
+def get_directions():
+    return {
+        "RIGHT": (0, 1), "LEFT": (0, -1),
+        "DOWN": (1, 0), "UP": (-1, 0),
+        "DOWN_RIGHT": (1, 1), "UP_LEFT": (-1, -1),
+        "DOWN_LEFT": (1, -1), "UP_RIGHT": (-1, 1),
+    }
+
+def dir_symbol(direction_name):
+    symbols = {
+        "RIGHT": "→", "LEFT": "←", "DOWN": "↓", "UP": "↑",
+        "DOWN_RIGHT": "↘", "UP_LEFT": "↖", "DOWN_LEFT": "↙", "UP_RIGHT": "↗"
+    }
+    return symbols.get(direction_name, "?")
+
+# ========== PATTERN 1: SINGLE DIGITS ==========
+def find_single_patterns(grid, pattern, group_start_col=0):
+    rows, cols = grid.shape
+    matches = []
+    directions = get_directions()
+    
+    for r in range(rows):
+        for c in range(cols):
+            for dir_name, (dr, dc) in directions.items():
+                seq_digits = []
+                pos_seq = []
+                
+                valid = True
+                for k in range(len(pattern)):
+                    rr = r + k * dr
+                    cc = c + k * dc
+                    if 0 <= rr < rows and 0 <= cc < cols:
+                        val = grid[rr, cc]
+                        if not is_numeric(val):
+                            valid = False
+                            break
+                        digit = safe_int(val) % 10
+                        seq_digits.append(digit)
+                        pos_seq.append((rr, cc))
+                    else:
+                        valid = False
+                        break
+                
+                if valid and seq_digits == pattern:
+                    cells = [excel_coord(DATA_START_ROW + rp, group_start_col + cp) 
+                           for rp, cp in pos_seq]
+                    vals = [safe_int(grid[rp, cp]) for rp, cp in pos_seq]
+                    matches.append(f"[1-SINGLE] {pattern} {dir_symbol(dir_name)} {vals}: {', '.join(cells)}")
+    return matches
+
+# ========== PATTERN 2: VERTICAL SUMS ==========
+# ========== PATTERN 2: VERTICAL SUMS (ENHANCED - ALL DIRECTIONS) ==========
+# ========== PATTERN 2: VERTICAL SUMS (NO DUPLICATES) ==========
+def find_vertical_patterns(grid, pattern, group_start_col=0):
+    """Vertical pair sums in 8 directions - NO OPPOSITE DIRECTION DUPLICATES"""
+    rows, cols = grid.shape
+    matches = []
+    directions = get_directions()
+    
+    # ✅ SKIP OPPOSITE DIRECTION DUPLICATES
+    primary_directions = {
+        "RIGHT": (0, 1), "DOWN": (1, 0), "DOWN_RIGHT": (1, 1), 
+        "DOWN_LEFT": (1, -1)
+    }  # Only "forward" directions - no LEFT/UP mirrors
+    
+    for start_r in range(rows):
+        for start_c in range(cols):
+            for dir_name, (dr, dc) in primary_directions.items():  # ✅ LIMITED DIRECTIONS
+                seq_digits = []
+                pos_seq = []
+                valid = True
+                
+                for k in range(len(pattern)):
+                    r = start_r + k * dr
+                    c = start_c + k * dc
+                    
+                    if r + 1 >= rows or r < 0 or c < 0 or c >= cols:
+                        valid = False
+                        break
+                    
+                    val1 = safe_int(grid[r, c])
+                    val2 = safe_int(grid[r + 1, c])
+                    
+                    if val1 is None or val2 is None:
+                        valid = False
+                        break
+                    
+                    total = val1 + val2
+                    seq_digits.append(total % 10)
+                    pos_seq.append((r, c))
+                
+                if valid and seq_digits == pattern:
+                    cells = []
+                    sums_display = []
+                    for r, c in pos_seq:
+                        row1 = DATA_START_ROW + r + 1
+                        row2 = DATA_START_ROW + r + 2
+                        col_letter = excel_coord(0, group_start_col + c)[0]
+                        cells.append(f"{col_letter}{row1}+{col_letter}{row2}")
+                        sums_display.append(str(safe_int(grid[r,c]) + safe_int(grid[r+1,c])))
+                    
+                    matches.append(f"[2-VERT] {pattern} {dir_symbol(dir_name)} [{','.join(sums_display)}]: {', '.join(cells)}")
+    
+    return matches
+
+
+
+# ========== PATTERN 3: STAGGERED SUMS ==========
+def find_staggered_vertical_sums(grid, pattern, group_start_col=0):
+    rows, cols = grid.shape
+    matches = []
+    
+    for base_r in range(rows - 3):
+        for base_c in range(cols):
+            for direction in [1, -1]:
+                seq_digits = []
+                pos_pairs = []
+                valid = True
+                
+                for k in range(3):
+                    r = base_r + k
+                    c = base_c + k * direction
+                    if r + 1 >= rows or c < 0 or c >= cols:
+                        valid = False
+                        break
+                    val1 = safe_int(grid[r, c])
+                    val2 = safe_int(grid[r + 1, c])
+                    if val1 is None or val2 is None:
+                        valid = False
+                        break
+                    total = val1 + val2
+                    seq_digits.append(total % 10)
+                    pos_pairs.append((r, c))
+                
+                if valid and seq_digits == pattern:
+                    dir_sym = "→" if direction == 1 else "←"
+                    cells = []
+                    sums_display = []
+                    for r, c in pos_pairs:
+                        row1 = DATA_START_ROW + r + 1
+                        row2 = DATA_START_ROW + r + 2
+                        col_letter = excel_coord(0, group_start_col + c)[0]
+                        cells.append(f"{col_letter}{row1}+{col_letter}{row2}")
+                        sums_display.append(str(safe_int(grid[r,c]) + safe_int(grid[r+1,c])))
+                    matches.append(f"[3-STAG] {pattern} {dir_sym} [{','.join(sums_display)}]: {', '.join(cells)}")
+    return matches
+
+# ========== PATTERN 4: HORIZONTAL 3-DIGIT ==========
+def find_horizontal_3digit_sums(grid, pattern, group_start_col=0):
+    rows, cols = grid.shape
+    matches = []
+    
+    for start_r in range(rows):
+        for start_c in range(cols - 1):
+            seq_digits = []
+            pos_pairs = []
+            
+            valid = True
+            for k in range(3):
+                r = start_r + k
+                c1, c2 = start_c, start_c + 1
+                if r >= rows or c2 >= cols:
+                    valid = False
+                    break
+                val1 = safe_int(grid[r, c1])
+                val2 = safe_int(grid[r, c2])
+                if val1 is None or val2 is None:
+                    valid = False
+                    break
+                total = val1 + val2
+                seq_digits.append(total % 10)
+                pos_pairs.append((r, c1, c2))
+            
+            if valid and seq_digits == pattern:
+                cells = []
+                sums_display = []
+                for r, c1, c2 in pos_pairs:
+                    col1 = excel_coord(0, group_start_col + c1)[0]
+                    col2 = excel_coord(0, group_start_col + c2)[0]
+                    row_num = DATA_START_ROW + r + 1
+                    cell_pair = f"{col1}{row_num}+{col2}{row_num}"
+                    total = safe_int(grid[r, c1]) + safe_int(grid[r, c2])
+                    cells.append(cell_pair)
+                    sums_display.append(str(total))
+                matches.append(f"[4-HORIZ] {pattern} ↓ [{','.join(sums_display)}]: {', '.join(cells)}")
+    return matches
+
+# ========== PATTERN 5: 2-DIGIT BREAKDOWN ==========
+def find_2digit_sums(grid, pattern, group_start_col=0):
+    rows, cols = grid.shape
+    matches = []
+    directions = get_directions()
+    
+    for r in range(rows):
+        for c in range(cols):
+            for dir_name, (dr, dc) in directions.items():
+                seq_digits = []
+                pos_seq = []
+                
+                valid = True
+                for k in range(len(pattern)):
+                    rr = r + k * dr
+                    cc = c + k * dc
+                    if 0 <= rr < rows and 0 <= cc < cols:
+                        val = safe_int(grid[rr, cc])
+                        if val is None or val < 10:
+                            valid = False
+                            break
+                        tens = val // 10
+                        units = val % 10
+                        total = tens + units
+                        digit = total % 10
+                        seq_digits.append(digit)
+                        pos_seq.append((rr, cc))
+                    else:
+                        valid = False
+                        break
+                
+                if valid and seq_digits == pattern:
+                    cells = [excel_coord(DATA_START_ROW + rp, group_start_col + cp) for rp, cp in pos_seq]
+                    breakdown = []
+                    for rp, cp in pos_seq:
+                        val = safe_int(grid[rp, cp])
+                        tens = val // 10
+                        units = val % 10
+                        total = tens + units
+                        breakdown.append(f"{tens}+{units}={total}")
+                    matches.append(f"[5-2DIG] {pattern} {dir_symbol(dir_name)} [{','.join(breakdown)}]: {', '.join(cells)}")
+    return matches
+
+
+# ========== PATTERN 6: SLIDING H4+H5→G6+G7→F8+F9 (v15 FIXED) ==========
+def find_columnwise_staggered_sums(grid, pattern, group_start_col=0):
+    """SLIDING: ANY row position - Hx+H(x+1), G(x+2)+G(x+3), F(x+4)+F(x+5)"""
+    rows, cols = grid.shape
+    matches = []
+    
+    # SLIDE THROUGH ALL STARTING ROWS (like other patterns)
+    for base_r in range(rows - 6):  # Need 6+ rows for 3 pairs
+        for base_c in range(2, cols):  # Need F,G,H columns
+            columns = [base_c, base_c-1, base_c-2]  # H→G→F
+            
+            seq_digits = []
+            pos_pairs = []
+            valid = True
+            
+            # 1st pair: H(base_r)+H(base_r+1)
+            r1 = base_r
+            c1 = columns[0]  # H column
+            if r1 + 1 < rows:
+                val1 = safe_int(grid[r1, c1])
+                val2 = safe_int(grid[r1 + 1, c1])
+                if val1 is None or val2 is None:
+                    valid = False
+                else:
+                    seq_digits.append((val1 + val2) % 10)
+                    pos_pairs.append((r1, c1))
+            else:
+                valid = False
+            
+            # 2nd pair: G(base_r+2)+G(base_r+3)  
+            r2 = base_r + 2
+            c2 = columns[1]  # G column
+            if valid and r2 + 1 < rows:
+                val1 = safe_int(grid[r2, c2])
+                val2 = safe_int(grid[r2 + 1, c2])
+                if val1 is None or val2 is None:
+                    valid = False
+                else:
+                    seq_digits.append((val1 + val2) % 10)
+                    pos_pairs.append((r2, c2))
+            
+            # 3rd pair: F(base_r+4)+F(base_r+5)
+            r3 = base_r + 4
+            c3 = columns[2]  # F column
+            if valid and r3 + 1 < rows:
+                val1 = safe_int(grid[r3, c3])
+                val2 = safe_int(grid[r3 + 1, c3])
+                if val1 is None or val2 is None:
+                    valid = False
+                else:
+                    seq_digits.append((val1 + val2) % 10)
+                    pos_pairs.append((r3, c3))
+            
+            # MATCH!
+            if valid and seq_digits == pattern:
+                cells = []
+                sums_display = []
+                for r, c in pos_pairs:
+                    row1 = DATA_START_ROW + r + 1
+                    row2 = DATA_START_ROW + r + 2
+                    col_letter = excel_coord(0, group_start_col + c)[0]
+                    cells.append(f"{col_letter}{row1}+{col_letter}{row2}")
+                    sums_display.append(str(safe_int(grid[r,c]) + safe_int(grid[r+1,c])))
+                matches.append(f"[6-COLSTAG] {pattern} ← [{','.join(sums_display)}]: {', '.join(cells)}")
+    
+    return matches
+
+# =============================================================================
+# END OF FUNCTIONS
+# =============================================================================
+# ========== DEBUG FUNCTION ==========
+def debug_cell_values(grid, group_start_col=0):
+    """Print exact values in K10,K11,K12 and nearby"""
+    print("\n🔍 DEBUG: Cell inspection")
+    
+    # K10 = row 7 (0-indexed), col 10 (K=10)
+    # K11 = row 8, col 10
+    # K12 = row 9, col 10
+    
+    row_start = 7  # K10 (DATA_START_ROW=3 +7 = row 10)
+    
+    print("📍 Exact cell values:")
+    for i in range(3):
+        r = row_start + i
+        c = 10  # K column
+        if r < grid.shape[0]:
+            val = grid[r, c]
+            digit = safe_int(val) % 10 if is_numeric(val) else "NON-NUMERIC"
+            print(f"K{10+i} = {val} → digit={digit}")
+    
+    # Check Pattern 1 logic for RIGHT direction
+    print("\n🧮 Pattern 1 test (RIGHT direction):")
+    seq = []
+    for i in range(3):
+        r = row_start + i
+        c = 10 + i  # K10→L11→M12 (diagonal RIGHT)
+        if r < grid.shape[0] and c < grid.shape[1]:
+            val = grid[r, c]
+            digit = safe_int(val) % 10 if is_numeric(val) else None
+            seq.append(digit)
+            print(f"Pos{i+1}: {excel_coord(DATA_START_ROW+r, group_start_col+c)} = {val} → {digit}")
+    
+    print(f"Full sequence: {seq} == [1,2,3]? {seq == [1,2,3]}")
+
+
+
+# ========== MASTER SCANNER ==========
+# ========== MASTER SCANNER (DEDUPLICATED) ==========
+def find_all_patterns(grid, pattern, group_start_col=0):
+    """6 Optimized Pattern Types."""
+    return (
+        find_single_patterns(grid, pattern, group_start_col) +
+        find_vertical_patterns(grid, pattern, group_start_col) +
+        find_staggered_vertical_sums(grid, pattern, group_start_col) +
+        find_horizontal_3digit_sums(grid, pattern, group_start_col) +
+        find_2digit_sums(grid, pattern, group_start_col) +
+        find_columnwise_staggered_sums(grid, pattern, group_start_col)
+    )
+
+# ========== DEDUPLICATION FUNCTION ==========
+def deduplicate_matches(matches):
+    """Remove exact cell set duplicates regardless of pattern/direction"""
+    seen_cells = set()
+    unique_matches = []
+    
+    for match in matches:
+        # Extract just the cells (ignore pattern/dir)
+        cells_part = match.split(': ')[1] if ': ' in match else match
+        cells_tuple = tuple(sorted(cells_part.split(', ')))  # Sort for consistency
+        
+        if cells_tuple not in seen_cells:
+            seen_cells.add(cells_tuple)
+            unique_matches.append(match)
+    
+    return unique_matches
+
+
+# ========== MAIN EXECUTION (FIXED) ==========
+# ========== MAIN EXECUTION (DEDUPLICATED) ==========
+import os
+import shutil
+
+all_results = {}
+
+import os
+import shutil
+
+for file_key, path in excel_files.items():
+    print(f"\n{'='*80}")
+    print(f"📁 FILE: {file_key}")
+    print(f"{'='*80}")
+
+    # 💥 FORCE FRESH COPY (no Excel cache can survive this)
+    path_temp = path.replace(".xlsx", "_fresh.xlsx")
+    if os.path.exists(path_temp):
+        os.remove(path_temp)          # Remove previous temp
+    shutil.copy2(path, path_temp)   # Pure fresh copy
+    print(f"🔄 Fresh copy: {path_temp}")
+
+    df = pd.read_excel(
+        path_temp,
+        header=None,
+        engine="openpyxl",
+        dtype=None,
+        keep_default_na=False
+    )
+    df_data = df.iloc[DATA_START_ROW:DATA_START_ROW+ROWS_TO_MATCH, :].reset_index(drop=True)
+
+    df_data = df_data.dropna(how='all')
+
+    grid = df_data.values  # ← GRID IS DEFINED HERE
+
+    print(f"✅ Grid: {grid.shape[0]}x{grid.shape[1]}")
+
+    all_results[file_key] = {}
+    for group_name, (start_col, end_col) in groups.items():
+        group_grid = grid[:, start_col:end_col + 1]
+        # 🔥 ADD DEBUG FOR "U" GROUP ONLY
+        if group_name == "L":
+                debug_cell_values(grid)  # ← ADD THIS LINE
+        # ↓ your existing per‑group logic here (e.g., pattern matching on group_grid)
+
+        
+        # 🔥 FIXED: DEDUPLICATE AFTER BOTH SCANS
+        forward_matches = find_all_patterns(group_grid, pattern, start_col)
+        reverse_matches = find_all_patterns(group_grid, reverse_pattern, start_col)
+        all_matches_raw = forward_matches + reverse_matches
+        all_matches = deduplicate_matches(all_matches_raw)  # ← ADD THIS LINE
+        
+        all_results[file_key][group_name] = all_matches
+
+# ========== RESULTS ==========
+# ========== FINAL DISPLAY ==========
+# ========== EXCEL EXPORT WITH SUMMARY + GROUPS (v15.3) ==========
+from datetime import datetime
+import time
+
+# ========== EXCEL EXPORT SIMPLIFIED (v15.4) ==========
+def export_grid_results_v15(all_results):
+    """YOUR SPEC: File, Group, Match_ID, Pattern_Type, Direction, Sums_Values, Cells"""
+    
+    excel_output_rows = []
+    for file_key, groups_dict in all_results.items():
+        for group_name, matches in groups_dict.items():
+            for i, match in enumerate(matches):
+                excel_output_rows.append({
+                    'File': file_key,
+                    'Group': group_name,
+                    'Match_ID': i+1,
+                    # 'Total_In_Group': len(matches),     # EXCLUDED
+                    'Pattern_Type': match.split('[')[1].split('-')[0] if '-' in match.split('[')[1] else 'Unknown',
+                    # 'Pattern': match.split(']')[1].split(' ')[0],  # EXCLUDED
+                    'Direction': match.split(' ')[2] if len(match.split()) > 2 else '',
+                    'Sums_Values': match.split('[')[1].split(']')[0] if '[' in match and ']' in match else '',
+                    'Cells': match.split(': ')[1] if ': ' in match else match
+                    # 'Full_Match': match  # EXCLUDED
+                })
+    
+    if not excel_output_rows:
+        print("⚠️  No matches found")
+        return
+    
+    # YOUR FOLDER + TIMESTAMP FORMAT
+    date_str = datetime.today().strftime("%d_%m")
+    time_str = datetime.today().strftime("%H%M")
+    output_df = pd.DataFrame(excel_output_rows)
+    
+    for file_key in output_df["File"].unique():
+        file_data = output_df[output_df["File"] == file_key]
+        output_filename = f"6D_PATTERN_RSLT_{file_key}_{date_str}_{time_str}.xlsx"
+        output_path = rf"D:\TM_HM\{file_key}\{output_filename}"
+        
+        try:
+            with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+                # SUMMARY_ALL (7 columns only)
+                file_data.to_excel(writer, sheet_name='SUMMARY_ALL', index=False)
+                
+                # GROUP SHEETS (same 7 columns)
+                for group_name in file_data['Group'].unique():
+                    group_data = file_data[file_data['Group'] == group_name]
+                    if not group_data.empty:
+                        sheet_name = group_name[:31]
+                        group_data.to_excel(writer, sheet_name=sheet_name, index=False)
+            
+            print(f"✅ {file_key}: {len(file_data)} results → {output_filename}")
+            
+        except PermissionError:
+            alt_time = time.strftime("%H%M")
+            alt_filename = f"6D_PATTERN_RSLT_{file_key}_{date_str}_{alt_time}_ALT.xlsx"
+            alt_path = rf"D:\TM_HM\{file_key}\\{alt_filename}"
+            file_data.to_excel(alt_path, index=False)
+            print(f"⚠️  {file_key}: Saved ALT → {alt_filename}")
+    
+    print(f"\n{'='*80}")
+    print("🎯 GRID PART 3 v15.4 - SIMPLIFIED EXPORT COMPLETE!")
+    print("✅ Columns: File | Group | Match_ID | Pattern_Type | Direction | Sums_Values | Cells")
+    print(f"✅ D:\\TM_HM\\K\\6D_PATTERN_RSLT_K_28_02_1131.xlsx")
+    print(f"{'='*80}")
+
+
+
+# ========== RUN EXPORT ==========
+export_grid_results_v15(all_results)
+
+
+################ EOS ############

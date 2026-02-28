@@ -1,0 +1,263 @@
+# GRID MOTHER SCRIPT OF 1D ,2D SUM WITH UNIVERSAL MULTIPLE ALL DIRECTIONS (EVEN ADJOINING,LIKE L,V SHAPE)
+# GRID v15.5 (PERPLEX) DTD 27/02/2026
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import gc
+
+# ========== INITIALIZATION ==========
+gc.collect()
+
+# ========== CONFIGURATION ==========
+excel_files = {
+    "K": r"D:\\TM_HM\\K\\KG.xlsx",
+    "M": r"D:\\TM_HM\\M\\MG.xlsx"
+}
+
+groups = {
+    "U": (2, 7),      # C:H
+    "L": (10, 15),    # K:P
+    "P": (18, 23),    # S:X
+    "M": (26, 31),    # AA:AF
+    "OP": (34, 39),   # AI:AN
+    "OM": (42, 47)    # AQ:AV
+}
+
+pattern = [1, 2, 3]
+ROWS_TO_MATCH = 30
+DATA_START_ROW = 3
+
+# ========== CONFIGURATION: PATTERN TYPE FILTER ==========
+PATTERN_TYPE_FILTER = "ALL"  # "ALL", "SINGLE", "VERT", "HORZ", "2DIG"
+
+print(f"🔍 Scanning pattern: {pattern} + reverse {pattern[::-1]}")
+
+# ========== CORE UTILITIES ==========
+def is_numeric(val):
+    if pd.isna(val): return False
+    if isinstance(val, (pd.Timestamp, datetime)): return False
+    if isinstance(val, str):
+        val_str = str(val).strip()
+        if '-' in val_str and len(val_str) <= 5: return False
+        if val_str.upper() in ['SR.NO', 'SR NO', 'SRNO']: return False
+        try: float(val); return True
+        except: return False
+    return isinstance(val, (int, float, np.integer, np.floating))
+
+def safe_int(val):
+    if isinstance(val, (pd.Timestamp, datetime)): return None
+    try: return int(float(val))
+    except: return None
+
+def excel_coord(row_idx, col_idx):
+    col_letter = ''; col = col_idx
+    while col >= 0:
+        col_letter = chr(ord('A') + (col % 26)) + col_letter
+        col = col // 26 - 1
+    return f"{col_letter}{row_idx + 1}"
+
+# ========== UNIVERSAL DIRECTIONS ==========
+def get_directions():
+    return {
+        "RIGHT": (0, 1), "LEFT": (0, -1),
+        "DOWN": (1, 0), "UP": (-1, 0),
+        "DOWN_RIGHT": (1, 1), "UP_LEFT": (-1, -1),
+        "DOWN_LEFT": (1, -1), "UP_RIGHT": (-1, 1),
+    }
+
+def dir_symbol(direction_name):
+    symbols = {
+        "RIGHT": "→", "LEFT": "←", "DOWN": "↓", "UP": "↑",
+        "DOWN_RIGHT": "↘", "UP_LEFT": "↖", "DOWN_LEFT": "↙", "UP_RIGHT": "↗"
+    }
+    return symbols.get(direction_name, "?")
+
+# ========== PURE PATTERN TYPE CHECKER ==========
+def check_pattern_type(grid, r, c, target_digit, group_start_col, ALLOWED_TYPE):
+    rows, cols = grid.shape
+    val = safe_int(grid[r, c])
+    
+    if ALLOWED_TYPE == "SINGLE":
+        if val is not None and val % 10 == target_digit:
+            return [("SINGLE", f"{val}", excel_coord(DATA_START_ROW + r, group_start_col + c))]
+    
+    elif ALLOWED_TYPE == "VERT":
+        results = []
+        if r > 0:
+            val1 = safe_int(grid[r-1, c])
+            val2 = safe_int(grid[r, c])
+            if val1 is not None and val2 is not None:
+                total = val1 + val2
+                if total % 10 == target_digit:
+                    col_letter = excel_coord(0, group_start_col + c)[0]
+                    row1 = DATA_START_ROW + (r-1) + 1
+                    row2 = DATA_START_ROW + r + 1
+                    results.append(("VERT", f"{total}", f"{col_letter}{row1}+{col_letter}{row2}"))
+        if r + 1 < rows:
+            val1 = safe_int(grid[r, c])
+            val2 = safe_int(grid[r+1, c])
+            if val1 is not None and val2 is not None:
+                total = val1 + val2
+                if total % 10 == target_digit:
+                    col_letter = excel_coord(0, group_start_col + c)[0]
+                    row1 = DATA_START_ROW + r + 1
+                    row2 = DATA_START_ROW + (r+1) + 1
+                    results.append(("VERT", f"{total}", f"{col_letter}{row1}+{col_letter}{row2}"))
+        return results
+    
+    elif ALLOWED_TYPE == "HORZ":
+        results = []
+        if c > 0:
+            val1 = safe_int(grid[r, c-1])
+            val2 = safe_int(grid[r, c])
+            if val1 is not None and val2 is not None:
+                total = val1 + val2
+                if total % 10 == target_digit:
+                    col1 = excel_coord(0, group_start_col + c-1)[0]
+                    col2 = excel_coord(0, group_start_col + c)[0]
+                    row_num = DATA_START_ROW + r + 1
+                    results.append(("HORZ", f"{total}", f"{col1}{row_num}+{col2}{row_num}"))
+        if c + 1 < cols:
+            val1 = safe_int(grid[r, c])
+            val2 = safe_int(grid[r, c+1])
+            if val1 is not None and val2 is not None:
+                total = val1 + val2
+                if total % 10 == target_digit:
+                    col1 = excel_coord(0, group_start_col + c)[0]
+                    col2 = excel_coord(0, group_start_col + c+1)[0]
+                    row_num = DATA_START_ROW + r + 1
+                    results.append(("HORZ", f"{total}", f"{col1}{row_num}+{col2}{row_num}"))
+        return results
+    
+    elif ALLOWED_TYPE == "2DIG":
+        if val is not None and val >= 10:
+            tens = val // 10
+            units = val % 10
+            total = tens + units
+            if total % 10 == target_digit:
+                cell_ref = excel_coord(DATA_START_ROW + r, group_start_col + c)
+                return [("2DIG", f"{tens}+{units}={total}", cell_ref)]
+    
+    return []
+
+# ========== PURE PATTERN TRACER ==========
+def find_consistent_patterns(grid, pattern, group_start_col=0, pattern_type="ALL"):
+    rows, cols = grid.shape
+    directions = get_directions()
+    matches = []
+    
+    allowed_types = ["SINGLE", "VERT", "HORZ", "2DIG"] if pattern_type == "ALL" else [pattern_type]
+    
+    for p_type in allowed_types:
+        for start_r in range(rows):
+            for start_c in range(cols):
+                for dir_name, (dr, dc) in directions.items():
+                    sequence = []
+                    valid = True
+                    
+                    for step in range(len(pattern)):
+                        r = start_r + step * dr
+                        c = start_c + step * dc
+                        
+                        if not (0 <= r < rows and 0 <= c < cols):
+                            valid = False
+                            break
+                        
+                        possibilities = check_pattern_type(grid, r, c, pattern[step], group_start_col, p_type)
+                        if not possibilities:
+                            valid = False
+                            break
+                        
+                        sequence.append(possibilities[0])
+                    
+                    if valid and len(sequence) == len(pattern):
+                        dir_sym = dir_symbol(dir_name)
+                        cells = [item[2] for item in sequence]
+                        match_str = f"{dir_sym} : {', '.join(cells)}"
+                        matches.append((dir_sym, match_str))
+    
+    return matches
+
+# ========== MASTER ENGINE ==========
+def find_all_patterns(grid, pattern, group_start_col=0, pattern_type="ALL"):
+    forward = find_consistent_patterns(grid, pattern, group_start_col, pattern_type)
+    reverse = find_consistent_patterns(grid, pattern[::-1], group_start_col, pattern_type)
+    return forward + reverse
+
+# ========== MAIN EXECUTION ==========
+all_results = {}
+excel_output_rows = []
+
+for file_key, path in excel_files.items():
+    try:
+        df = pd.read_excel(path, header=None, dtype=None, keep_default_na=False)
+        df_data = df.iloc[DATA_START_ROW:DATA_START_ROW+ROWS_TO_MATCH, :].reset_index(drop=True)
+        df_data = df_data.dropna(how='all')
+        grid = df_data.values
+        
+        print(f"✅ {file_key}: Grid {grid.shape[0]}x{grid.shape[1]}")
+        
+        all_results[file_key] = {}
+        for group_name, (start_col, end_col) in groups.items():
+            group_grid = grid[:, start_col:end_col+1]
+            matches = find_all_patterns(group_grid, pattern, start_col, PATTERN_TYPE_FILTER)
+            all_results[file_key][group_name] = matches
+            
+            for direction, match_str in matches:
+                cells_part = match_str.split(" : ")[1] if " : " in match_str else match_str
+                excel_output_rows.append({
+                    "File": file_key,
+                    "Group": group_name,
+                    "Dir": direction,
+                    "Match": cells_part
+                })
+    except Exception as e:
+        print(f"❌ Error processing {file_key}: {e}")
+
+# ========== CONSOLE DISPLAY ==========
+print(f"\n{'='*80}")
+print("🎯 RESULTS SUMMARY")
+print(f"{'='*80}")
+
+total_matches = 0
+for file_key, groups_dict in all_results.items():
+    print(f"\n📋 FILE: {file_key}")
+    for group_name, matches in groups_dict.items():
+        total_matches += len(matches)
+        if matches:
+            print(f"  └─ {group_name}: {len(matches)} matches")
+
+print(f"\n{'='*80}")
+print(f"🎉 TOTAL: {total_matches} matches found!")
+print(f"{'='*80}")
+
+# ========== v15.5 EXCEL OUTPUT - UPDATED ==========
+date_str = datetime.today().strftime("%d_%m")
+time_str = datetime.today().strftime("%H%M")
+
+if excel_output_rows:
+    output_df = pd.DataFrame(excel_output_rows)
+    
+    for file_key in output_df["File"].unique():
+        file_data = output_df[output_df["File"] == file_key]
+        output_filename = f"PATTERN_RSLT_{file_key}_{date_str}_{time_str}.xlsx"
+        output_path = rf"D:\\TM_HM\\{file_key}\\{output_filename}"
+        
+        try:
+            file_data.to_excel(output_path, index=False, sheet_name=f"PATTERN_RSLT_{file_key}_{date_str}_{time_str}")
+            print(f"✅ {file_key}: {len(file_data)} results → {output_filename}")
+        except PermissionError:
+            import time
+            alt_time = time.strftime("%H%M")
+            alt_filename = f"PATTERN_RSLT_{file_key}_{date_str}_{alt_time}_ALT.xlsx"
+            alt_path = rf"D:\\TM_HM\\{file_key}\\{alt_filename}"
+            file_data.to_excel(alt_path, index=False, sheet_name=f"PATTERN_RSLT_{file_key}_{date_str}_{alt_time}_ALT")
+            print(f"⚠️  {file_key}: File was open, saved as → {alt_filename}")
+        except Exception as e:
+            print(f"❌ {file_key}: Export failed - {e}")
+else:
+    print("\n⚠️  No results to export")
+
+print(f"\n{'='*80}")
+print("✨ GRID v15.5 COMPLETED")
+print(f"{'='*80}")

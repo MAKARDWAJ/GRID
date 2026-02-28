@@ -1,0 +1,173 @@
+# GRID MOTHER SCRIPT OF SINGLE DIGIT .DTD 25/02/2026.>>> LOCKED
+# ( NEXT : ADDITON OF 2,3, DIGITS)
+
+
+import pandas as pd
+import numpy as np
+
+# ------------------ CONFIG ------------------
+excel_files = {
+    "K": r"D:\\TM_HM\\K\\KG.xlsx",
+    "M": r"D:\\TM_HM\\M\\MG.xlsx"
+}
+
+groups = {
+    "U": (2, 7),    # C:H
+    "L": (10, 15),  # K:P
+    "P": (18, 23),  # S:X
+    "M": (26, 31),  # AA:AF
+    "OP": (34, 39), # AI:AN
+    "OM": (42, 47)  # AQ:AV
+}
+
+ROWS_TO_MATCH = 20
+
+# Pattern to search
+pattern = [1, 2, 3]
+
+# Rows to scan (Excel row numbers)
+start_row = 7
+end_row = 55
+
+# ------------------ HELPER FUNCTIONS ------------------
+def excel_coord(row_idx, col_idx):
+    """Convert 0-indexed row, col to Excel-like coordinates."""
+    col_letter = ''
+    col = col_idx
+    while col >= 0:
+        col_letter = chr(ord('A') + (col % 26)) + col_letter
+        col = col // 26 - 1
+    return f"{col_letter}{row_idx+1}"
+
+def get_directions():
+    """Return all directions as (delta_row, delta_col)."""
+    return [
+        (0, 1),   # right
+        (0, -1),  # left
+        (1, 0),   # down
+        (-1, 0),  # up
+        (1, 1),   # down-right
+        (1, -1),  # down-left
+        (-1, 1),  # up-right
+        (-1, -1), # up-left
+    ]
+
+def find_patterns(grid, pattern, group_start_col):
+    rows, cols = grid.shape
+    pattern_len = len(pattern)
+    matches = []
+    directions = get_directions()
+
+    for r in range(rows):
+        for c in range(cols):
+            for dr, dc in directions:
+                seq = []
+                pos_seq = []
+
+                for k in range(pattern_len):
+                    rr = r + k * dr
+                    cc = c + k * dc
+                
+                    if 0 <= rr < rows and 0 <= cc < cols:
+                        val = grid[rr, cc]
+                        if pd.isna(val):
+                            break
+                        try:
+                            val = int(val)
+                        except:
+                            break
+                        seq.append(val)
+                        pos_seq.append((rr, cc))
+                    else:
+                        break
+
+                if len(seq) == pattern_len and seq == pattern:
+                    cells = []
+                    for rp, cp in pos_seq:
+                        actual_excel_row = 4 + rp
+                        actual_excel_col = 2 + group_start_col + cp  # ✅ Correct column base
+                        cell = excel_coord(actual_excel_row - 1, actual_excel_col)
+                        cells.append(cell)
+                    match_string = ", ".join(cells)
+                    matches.append(match_string)
+    return matches
+
+
+                
+# ------------------ MAIN PROGRAM ------------------
+all_results = {}
+
+# ------------------ CONFIG ------------------
+ROWS_TO_MATCH = 20
+
+# ------------------ MAIN ------------------
+for file_key, path in excel_files.items():
+    df = pd.read_excel(path, header=None)
+    df_data = df.iloc[3:52, :].reset_index(drop=True)  # FULL original
+    df_data = df_data.dropna(how='all')
+    
+    # 1. FULL GRID REFERENCE (one-time print)
+    full_grid = df_data.values
+    print(f"FULL GRID shape: {full_grid.shape}")
+    print("FULL grid[0] C-H:", full_grid[0, 2:8])
+    print("FULL grid[-1] C-H:", full_grid[-1, 2:8])
+    
+    # 2. LIMITED GRID FOR SCANNING (fast)
+    limited_df = df_data.iloc[:ROWS_TO_MATCH].reset_index(drop=True)
+    grid = limited_df.values  # For pattern scanning
+    print(f"LIMITED Grid shape: ({ROWS_TO_MATCH}, {grid.shape[1]})")
+    print("LIMITED grid[0] C-H:", grid[0, 2:8])
+    print("LIMITED grid[-1] C-H:", grid[-1, 2:8])
+    
+    all_results[file_key] = {}
+    
+    # Rest of your code uses 'grid' (limited)...
+    for group_name, (start_col, end_col) in groups.items():
+        group_grid = grid[:, start_col:end_col+1]  # Uses limited grid ✓
+        # ... debug, find_patterns...
+
+    
+    for group_name, (start_col, end_col) in groups.items():
+        # Use the SAME grid for ALL groups - NO recreation!
+        group_grid = grid[:, start_col:end_col+1]
+        
+        # DEBUG Group U
+        if file_key == "K" and group_name == "U":
+            # FIRST/LAST rows (handles small ROWS_TO_MATCH)
+            print("\nFIRST 5 GRID ROWS (C-H):")
+            first5_clean = grid[:min(5, grid.shape[0]), 2:8]  # Safe ✓
+            for row in first5_clean:
+                print(' '.join(str(int(x)) for x in row if not pd.isna(x)))
+            
+            print("\nLAST 5 GRID ROWS (C-H):") 
+            last5_clean = grid[max(0, grid.shape[0]-5):, 2:8]  # Safe ✓
+            for row in last5_clean:
+                print(' '.join(str(int(x)) for x in row if not pd.isna(x)))
+
+                 
+            
+            print("\nDEBUG CHECK FOR GROUP U (POST-FLIP)")
+            print("COLUMN MAPPING: 0=C,1=D,2=E,3=F,4=G,5=H")
+            col_G = 6
+            max_debug_row = min(10, 4+grid.shape[0])  # Don't exceed available rows
+            for excel_row in range(7, max_debug_row):
+                grid_row = excel_row - 4
+                if 0 <= grid_row < grid.shape[0]:  # Safe bounds check
+                    val = grid[grid_row, col_G]
+                    print(f"G{excel_row} = {val}")
+
+
+    
+        # Find patterns on sliced group columns
+        matches = find_patterns(group_grid, pattern, start_col-2)  # Adjust col offset
+        all_results[file_key][group_name] = matches
+        
+        # ------------------ OUTPUT ------------------
+for file_key, groups_dict in all_results.items():
+    print(f"\n=== FILE: {file_key} ===")
+    for group_name, matches in groups_dict.items():
+        print(f"\n--- Group {group_name} ---")
+        print(f"Total matches: {len(matches)}")
+        for i, m in enumerate(matches, 1):
+            print(f"{i}. {m}")
+
