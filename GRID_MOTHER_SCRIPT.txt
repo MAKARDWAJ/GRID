@@ -1,0 +1,419 @@
+# ==========================================================================
+#   MOTHER_ SCRIPT : 1D TO 5D WITH SUFFIX FROM GRID_DAILY.json , 
+#   FILE CHOICE, DTD 04-03-26 >>> LOCKED
+# ==========================================================================
+
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import gc
+import os
+import json
+from pathlib import Path
+from openpyxl.utils import get_column_letter
+
+gc.collect()
+
+# =============================================================================
+# SUPER SMART CONFIG - READS SUFFIX FIRST (v19)
+# =============================================================================
+class ConfigManager:
+    def __init__(self):
+        """Find SUFFIX from GRID_DAILY.json FIRST, then build path"""
+        self.suffix = ""
+        self.pattern = [1,2,3,4,5]  # Default
+        self.rows_to_match = 40
+        
+        # STEP 1: Try common GRID_DAILY.json locations FIRST
+        possible_config_paths = [
+            r"D:\TM_HM-0203\GRID_DAILY.json",      # Your actual folder
+            r"D:\TM_HM\GRID_DAILY.json",           # Base folder
+            r"D:\TM_HM\KM_GRID_DAILY.json"         # Old master
+        ]
+        
+        config_found = False
+        for config_path in possible_config_paths:
+            if Path(config_path).exists():
+                # print(f"✅ FOUND CONFIG: {config_path}")
+                print(f"✅ : {config_path}")
+                with open(config_path) as f:
+                    config = json.load(f)
+                
+                self.suffix = config.get("UNIVERSAL_SUFFIX", "").strip()
+                raw_pattern = config.get("pattern_input", self.pattern)
+
+                # FORCE CONVERT TO LIST OF INTS
+                if isinstance(raw_pattern, str):
+                    self.pattern = [int(d) for d in raw_pattern if d.isdigit()]
+                elif isinstance(raw_pattern, int):
+                    self.pattern = [int(d) for d in str(raw_pattern)]
+                elif isinstance(raw_pattern, list):
+                    self.pattern = [int(x) for x in raw_pattern]
+                else:
+                    self.pattern = [1,4,6]  # fallback
+                
+                self.rows_to_match = config.get("ROWS_TO_MATCH", self.rows_to_match)
+                
+                # Extract SUFFIX from folder name as fallback
+                if not self.suffix and "TM_HM-" in config_path:
+                    self.suffix = config_path.split("TM_HM-")[-1].replace("\\GRID_DAILY.json", "")
+                
+                config_found = True
+                break
+        
+        if not config_found:
+            print("⚠️ No GRID_DAILY.json found - using DEFAULT")
+            self.suffix = "0203"  # Trial hardcode YOUR suffix
+        
+        # STEP 2: Build base folder from SUFFIX
+        self.base_folder = Path(f"D:\\TM_HM-{self.suffix}")
+        self.base_folder.mkdir(parents=True, exist_ok=True)
+        
+        # print(f"📁 SUFFIX: '{self.suffix}'")
+        # print(f"📁 BASE FOLDER: {self.base_folder}")
+        print(f"🔍 PATTERN: {self.pattern}")
+        print(f"📊 ROWS: {self.rows_to_match}")
+        # print(f"✅ READY!")
+
+# =============================================================================
+# CORE UTILITIES (UNCHANGED - PERFECT)
+# =============================================================================
+ 
+def is_numeric(val):
+    if pd.isna(val): return False
+    if isinstance(val, (pd.Timestamp, datetime)): return False
+    if isinstance(val, str):
+        val_str = str(val).strip()
+        if '-' in val_str and len(val_str) <= 5: return False
+        if val_str.upper() in ['SR.NO', 'SR NO', 'SRNO']: return False
+        try: float(val); return True
+        except: return False
+    return isinstance(val, (int, float, np.integer, np.floating))
+
+def safe_int(val):
+    if isinstance(val, (pd.Timestamp, datetime)): return None
+    try: return int(float(val))
+    except: return None
+
+from openpyxl.utils import get_column_letter
+
+def excel_coord(row_idx, col_idx):
+    col_letter = get_column_letter(col_idx + 1)  # 1-based index
+    return f"{col_letter}{row_idx + 1}"
+
+# =============================================================================
+# DIRECTION SYMBOLS (UNCHANGED)
+# =============================================================================
+ 
+def dir_symbol(direction_name):
+    symbols = {
+        "RIGHT": "→", "LEFT": "←", "DOWN": "↓", "UP": "↑",
+        "DOWN_RIGHT": "↘", "UP_LEFT": "↖", "DOWN_LEFT": "↙", "UP_RIGHT": "↗",
+        "STAG_DOWN": "↓↓", "STAG_RIGHT": "→→", "STAG_DR": "↙↙", "STAG_DL": "↘↘",
+        "3D": "↕3", "4D": "↕4", "5D": "↕5"
+    }
+    return symbols.get(direction_name, direction_name[:4])
+
+# =============================================================================
+# PATTERN TYPE CHECKER + 3D/4D/5D (UNCHANGED)
+# =============================================================================
+ 
+def check_pattern_type(grid, r, c, target_digit, group_start_col, ALLOWED_TYPE):
+    rows, cols = grid.shape
+    
+    if ALLOWED_TYPE == "SINGLE":
+        val = safe_int(grid[r, c])
+        if val is not None and val % 10 == target_digit:
+            return [("SINGLE", f"{val}", excel_coord(DATA_START_ROW + r, group_start_col + c))]
+    
+    elif ALLOWED_TYPE == "VERT":
+        if r + 1 < rows:
+            val1 = safe_int(grid[r, c])
+            val2 = safe_int(grid[r+1, c])
+            if val1 is not None and val2 is not None:
+                total = val1 + val2
+                if total % 10 == target_digit:
+                    col_letter = get_column_letter(group_start_col + c + 1)
+                    row1 = DATA_START_ROW + r + 1
+                    row2 = DATA_START_ROW + r + 2
+                    return [("VERT", f"{total}", f"{col_letter}{row1}+{col_letter}{row2}")]
+    
+    elif ALLOWED_TYPE == "HORZ":
+        if c + 1 < cols:
+            val1 = safe_int(grid[r, c])
+            val2 = safe_int(grid[r, c+1])
+            if val1 is not None and val2 is not None:
+                total = val1 + val2
+                if total % 10 == target_digit:
+                    col1 = get_column_letter(group_start_col + c + 1)
+                    col2 = get_column_letter(group_start_col + c + 2)
+                    row_num = DATA_START_ROW + r + 1
+                    return [("HORZ", f"{total}", f"{col1}{row_num}+{col2}{row_num}")]
+    
+    elif ALLOWED_TYPE == "2DIG":
+        val = safe_int(grid[r, c])
+        if val is not None and val >= 10:
+            tens = val // 10
+            units = val % 10
+            total = tens + units
+            if total % 10 == target_digit:
+                cell_ref = excel_coord(DATA_START_ROW + r, group_start_col + c)
+                return [("2DIG", f"{tens}+{units}={total}", cell_ref)]
+    
+    elif ALLOWED_TYPE == "3D":
+        if r + 2 < rows:
+            vals = [safe_int(grid[r+i, c]) for i in range(3)]
+            if all(v is not None for v in vals):
+                total = sum(vals)
+                if total % 10 == target_digit:
+                    col_letter = get_column_letter(group_start_col + c + 1)
+                    rows_str = "+".join([f"{col_letter}{DATA_START_ROW+r+i+1}" for i in range(3)])
+                    return [("3D", f"{total}", rows_str)]
+    
+    elif ALLOWED_TYPE == "4D":
+        if r + 3 < rows:
+            vals = [safe_int(grid[r+i, c]) for i in range(4)]
+            if all(v is not None for v in vals):
+                total = sum(vals)
+                if total % 10 == target_digit:
+                    col_letter = get_column_letter(group_start_col + c + 1)
+                    rows_str = "+".join([f"{col_letter}{DATA_START_ROW+r+i+1}" for i in range(4)])
+                    return [("4D", f"{total}", rows_str)]
+    
+    elif ALLOWED_TYPE == "5D":
+        if r + 4 < rows:
+            vals = [safe_int(grid[r+i, c]) for i in range(5)]
+            if all(v is not None for v in vals):
+                total = sum(vals)
+                if total % 10 == target_digit:
+                    col_letter = get_column_letter(group_start_col + c + 1)
+                    rows_str = "+".join([f"{col_letter}{DATA_START_ROW+r+i+1}" for i in range(5)])
+                    return [("5D", f"{total}", rows_str)]
+    
+    return []
+
+# =============================================================================
+# PATTERN TRACER (UNCHANGED - PERFECT)
+# =============================================================================
+ 
+def find_consistent_patterns(grid, pattern, group_start_col=0, pattern_type="ALL"):
+    rows, cols = grid.shape
+    
+    directions = {
+        "RIGHT": (0, 1), "DOWN": (1, 0), "DOWN_RIGHT": (1, 1), "DOWN_LEFT": (1, -1),
+        "STAG_DOWN": (2, 0), "STAG_RIGHT": (0, 2), "STAG_DR": (2, -1), "STAG_DL": (2, 1)
+    }
+    
+    matches = []
+    unique_patterns = {}
+    allowed_types = ["SINGLE", "VERT", "HORZ", "2DIG", "3D", "4D", "5D"] if pattern_type == "ALL" else [pattern_type]
+    
+    for p_type in allowed_types:
+        for start_r in range(rows):
+            for start_c in range(cols):
+                for dir_name, (dr, dc) in directions.items():
+                    sequence = []
+                    cells = []
+                    valid = True
+                    
+                    for step in range(len(pattern)):
+                        r = start_r + step * dr
+                        c = start_c + step * dc
+                        
+                        if not (0 <= r < rows and 0 <= c < cols):
+                            valid = False
+                            break
+                        
+                        possibilities = check_pattern_type(grid, r, c, pattern[step], group_start_col, p_type)
+                        if not possibilities:
+                            valid = False
+                            break
+                        
+                        cell_ref = possibilities[0][2]
+                        cells.append(cell_ref)
+                        sequence.append(possibilities[0])
+                    
+                    if valid and len(sequence) == len(pattern):
+                        pattern_key = "_".join(sorted(cells))
+                        if pattern_key not in unique_patterns:
+                            unique_patterns[pattern_key] = True
+                            dir_sym = dir_symbol(dir_name)
+                            nd_label = p_type
+
+                            if nd_label in ["SINGLE"]:
+                                nd_value = "1D"
+                            elif nd_label in ["VERT", "HORZ", "2DIG"]:
+                                nd_value = "2D"
+                            else:
+                                nd_value = nd_label
+                            
+                            match_str = f"{dir_sym} : {', '.join(cells)}"
+                            matches.append((dir_sym, nd_value, match_str))
+    
+    return matches
+
+# =============================================================================
+# MASTER ENGINE (UNCHANGED)
+# =============================================================================
+ 
+def find_all_patterns(grid, pattern, group_start_col=0, pattern_type="ALL"):
+    forward = find_consistent_patterns(grid, pattern, group_start_col, pattern_type)
+    reverse = find_consistent_patterns(grid, pattern[::-1], group_start_col, pattern_type)
+    return forward + reverse
+
+# =============================================================================
+
+# =============================================================================
+# CONSTANTS & PROCESSOR (COMPACT)
+# =============================================================================
+DATA_START_ROW = 3
+excel_files = {"K": "K/KG.xlsx", "M": "M/MG.xlsx"}
+groups = {"U":(2,7),"L":(10,15),"P":(18,23),"M":(26,31),"OP":(34,39),"OM":(42,47)}
+
+class DataProcessor:
+    def __init__(self, config):
+        self.config = config
+
+    def process(self, file_types):
+        config = self.config
+        all_results = {}
+        excel_output_rows = []
+
+        for file_key in file_types:
+            path = config.base_folder / excel_files[file_key]
+            if not path.exists():
+                print(f"❌ {path}")
+                continue
+
+            print(f"\n📂 {file_key}: {path}")
+            df = pd.read_excel(path, header=None, dtype=None, keep_default_na=False)
+
+            grid = (
+                df.iloc[DATA_START_ROW:DATA_START_ROW+config.rows_to_match, :]
+                  .dropna(how='all')
+                  .values
+            )
+
+            group_results = {}
+
+            for gname, (sc, ec) in groups.items():
+                ggrid = grid[:, sc:ec+1]
+                matches = find_all_patterns(ggrid, config.pattern, sc)
+                group_results[gname] = matches
+
+                for dir_sym, nd, match_str in matches:
+                    excel_output_rows.append({
+                        "File": file_key,
+                        "Group": gname,
+                        "Dir": dir_sym,
+                        "ND": nd,
+                        "Match": match_str.split(" : ")[1]
+                    })
+
+            all_results[file_key] = group_results
+
+        self._console_summary(all_results)
+        self._save_results(excel_output_rows, file_types)
+
+# =============================================================================
+#               CONSOLE
+# =============================================================================
+    def _console_summary(self, all_results):
+        
+        print("MATCH SUMMARY")
+           
+        for file_key, group_dict in all_results.items():
+            # Filter groups with matches
+            non_empty_groups = {
+                g: m for g, m in group_dict.items() if len(m) > 0
+            }
+    
+            if not non_empty_groups:
+                continue  # skip file entirely if no matches
+    
+            print(f"\n📂 FILE: {file_key}")
+    
+            for group_name, matches in non_empty_groups.items():
+                print(f"  └─ {group_name}: {len(matches)} matches")
+
+# =============================================================================
+#          EXPORT  RESULTS 
+# =============================================================================
+    
+    def _save_results(self, rows, selected_files):
+        if not rows:
+            print("\n⚠️ No results to export")
+            return
+    
+        print("\n📦 Saving Excel files...")
+        print("-" * 50)
+    
+        config = self.config
+        output_df = pd.DataFrame(rows)
+    
+        nd_priority = {"5D":1,"4D":2,"3D":3,"2D":4,"1D":5}
+        group_priority = {"U":1,"L":2,"P":3,"M":4,"OP":5,"OM":6}
+    
+        date_str = datetime.today().strftime("%d_%b")
+        time_str = datetime.today().strftime("%H%M")
+    
+        for file_key in selected_files:
+    
+            file_data = output_df[output_df["File"] == file_key].copy()
+            if file_data.empty:
+                continue
+    
+            file_data["GROUP_ORDER"] = file_data["Group"].map(group_priority)
+            file_data["ND_ORDER"] = file_data["ND"].map(nd_priority)
+    
+            file_data = (
+                file_data.sort_values(by=["GROUP_ORDER","ND_ORDER"])
+                         .drop(columns=["GROUP_ORDER","ND_ORDER"])
+                         .reset_index(drop=True)
+            )
+    
+            output_filename = f"PATTERN_RSLT_{file_key}_{date_str}_{time_str}.xlsx"
+    
+            output_dir = config.base_folder / file_key
+            output_dir.mkdir(parents=True, exist_ok=True)
+    
+            output_path = output_dir / output_filename
+    
+            with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+                file_data.to_excel(
+                    writer,
+                    sheet_name=output_filename.replace(".xlsx",""),
+                    index=False
+                )
+    
+            print(f"   ✔ {file_key} → {len(file_data)} rows")
+    
+        print("\n🎉 Export complete!")
+ 
+# =============================================================================
+# MAIN - READY TO RUN!
+# =============================================================================
+print("🎯  - SUFFIX AUTO-DETECT")
+
+config = ConfigManager()
+processor = DataProcessor(config)
+
+print("\n🎯 Select FILE set (1=BOTH, 2=K, 3=M, 4=EXIT):")
+choice = input("👉 Enter choice: ").strip()
+
+if choice == "4":
+    
+    print("\n👋 Exiting GRID...")
+elif choice in ("1", "2", "3"):
+    files = {
+        "1": ["K", "M"],
+        "2": ["K"],
+        "3": ["M"]
+    }[choice]
+
+    processor.process(files)
+    print("\n🎉 FULLY DONE!")
+else:
+    print("❌ Invalid choice. Exiting.")
+
+################# EOS #############################

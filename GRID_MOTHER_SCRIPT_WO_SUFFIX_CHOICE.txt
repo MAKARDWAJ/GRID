@@ -1,0 +1,380 @@
+# ================================================
+#   MOTHER COPY FOR pattern = [1, 2, 3, 4, 5,] >> & ND = 1,2,3,4,5,
+# ================================================
+
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import gc
+import os
+
+# =============================================================================
+# INITIALIZATION
+# =============================================================================
+
+gc.collect()
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+excel_files = {
+    "K": r"D:\\\\TM_HM\\\\K\\\\KG.xlsx",
+    "M": r"D:\\\\TM_HM\\\\M\\\\MG.xlsx"
+}
+
+groups = {
+    "U": (2, 7),      # C:H  
+    "L": (10, 15),    # K:P
+    "P": (18, 23),    # S:X
+    "M": (26, 31),    # AA:AF
+    "OP": (34, 39),   # AI:AN
+    "OM": (42, 47)    # AQ:AV
+}
+
+pattern = [4, 4, 6, 4,4]  # Target ending digits
+ROWS_TO_MATCH = 30
+DATA_START_ROW = 3
+PATTERN_TYPE_FILTER = "ALL"
+
+print(f"🔍 Scanning pattern: {pattern} + reverse {pattern[::-1]} + 3D/4D/5D")
+
+# =============================================================================
+# CORE UTILITIES (UNCHANGED - PERFECT)
+# =============================================================================
+ 
+def is_numeric(val):
+    if pd.isna(val): return False
+    if isinstance(val, (pd.Timestamp, datetime)): return False
+    if isinstance(val, str):
+        val_str = str(val).strip()
+        if '-' in val_str and len(val_str) <= 5: return False
+        if val_str.upper() in ['SR.NO', 'SR NO', 'SRNO']: return False
+        try: float(val); return True
+        except: return False
+    return isinstance(val, (int, float, np.integer, np.floating))
+
+def safe_int(val):
+    if isinstance(val, (pd.Timestamp, datetime)): return None
+    try: return int(float(val))
+    except: return None
+
+# =============================================================================
+# def excel_coord(row_idx, col_idx):
+#     col_letter = ''
+#     col = col_idx
+#     while col >= 0:
+#         col_letter = chr(ord('A') + (col % 26)) + col_letter
+#         col = col // 26 - 1
+#     return f"{col_letter}{row_idx + 1}"
+# =============================================================================
+
+from openpyxl.utils import get_column_letter
+
+def excel_coord(row_idx, col_idx):
+    col_letter = get_column_letter(col_idx + 1)  # 1-based index
+    return f"{col_letter}{row_idx + 1}"
+
+# =============================================================================
+# DIRECTION SYMBOLS (UNCHANGED)
+# =============================================================================
+ 
+def dir_symbol(direction_name):
+    symbols = {
+        "RIGHT": "→", "LEFT": "←", "DOWN": "↓", "UP": "↑",
+        "DOWN_RIGHT": "↘", "UP_LEFT": "↖", "DOWN_LEFT": "↙", "UP_RIGHT": "↗",
+        "STAG_DOWN": "↓↓", "STAG_RIGHT": "→→", "STAG_DR": "↙↙", "STAG_DL": "↘↘",
+        "3D": "↕3", "4D": "↕4", "5D": "↕5"
+    }
+    return symbols.get(direction_name, direction_name[:4])
+
+# =============================================================================
+# PATTERN TYPE CHECKER + 3D/4D/5D (EXTENDED)
+# =============================================================================
+ 
+def check_pattern_type(grid, r, c, target_digit, group_start_col, ALLOWED_TYPE):
+    rows, cols = grid.shape
+    
+    if ALLOWED_TYPE == "SINGLE":
+        val = safe_int(grid[r, c])
+        if val is not None and val % 10 == target_digit:
+            return [("SINGLE", f"{val}", excel_coord(DATA_START_ROW + r, group_start_col + c))]
+    
+    elif ALLOWED_TYPE == "VERT":
+        if r + 1 < rows:
+            val1 = safe_int(grid[r, c])
+            val2 = safe_int(grid[r+1, c])
+            if val1 is not None and val2 is not None:
+                total = val1 + val2
+                if total % 10 == target_digit:
+                    col_letter = get_column_letter(group_start_col + c + 1)
+                    row1 = DATA_START_ROW + r + 1
+                    row2 = DATA_START_ROW + r + 2
+                    return [("VERT", f"{total}", f"{col_letter}{row1}+{col_letter}{row2}")]
+    
+    elif ALLOWED_TYPE == "HORZ":
+        if c + 1 < cols:
+            val1 = safe_int(grid[r, c])
+            val2 = safe_int(grid[r, c+1])
+            if val1 is not None and val2 is not None:
+                total = val1 + val2
+                if total % 10 == target_digit:
+                    col1 = get_column_letter(group_start_col + c + 1)
+                    col2 = get_column_letter(group_start_col + c + 2)
+                    row_num = DATA_START_ROW + r + 1
+                    return [("HORZ", f"{total}", f"{col1}{row_num}+{col2}{row_num}")]
+    
+    elif ALLOWED_TYPE == "2DIG":
+        val = safe_int(grid[r, c])
+        if val is not None and val >= 10:
+            tens = val // 10
+            units = val % 10
+            total = tens + units
+            if total % 10 == target_digit:
+                cell_ref = excel_coord(DATA_START_ROW + r, group_start_col + c)
+                return [("2DIG", f"{tens}+{units}={total}", cell_ref)]
+    
+    # 🔥 NEW: 3D/4D/5D VERTICAL SUMS
+    elif ALLOWED_TYPE == "3D":
+        if r + 2 < rows:
+            vals = [safe_int(grid[r+i, c]) for i in range(3)]
+            if all(v is not None for v in vals):
+                total = sum(vals)
+                if total % 10 == target_digit:
+                    col_letter = ''.join(filter(str.isalpha, excel_coord(0, group_start_col + c)))
+                    rows_str = "+".join([f"{col_letter}{DATA_START_ROW+r+i+1}" for i in range(3)])
+                    return [("3D", f"{total}", rows_str)]
+    
+    elif ALLOWED_TYPE == "4D":
+        if r + 3 < rows:
+            vals = [safe_int(grid[r+i, c]) for i in range(4)]
+            if all(v is not None for v in vals):
+                total = sum(vals)
+                if total % 10 == target_digit:
+                    col_letter = ''.join(filter(str.isalpha, excel_coord(0, group_start_col + c)))
+                    rows_str = "+".join([f"{col_letter}{DATA_START_ROW+r+i+1}" for i in range(4)])
+                    return [("4D", f"{total}", rows_str)]
+    
+    elif ALLOWED_TYPE == "5D":
+        if r + 4 < rows:
+            vals = [safe_int(grid[r+i, c]) for i in range(5)]
+            if all(v is not None for v in vals):
+                total = sum(vals)
+                if total % 10 == target_digit:
+                    col_letter = ''.join(filter(str.isalpha, excel_coord(0, group_start_col + c)))
+                    rows_str = "+".join([f"{col_letter}{DATA_START_ROW+r+i+1}" for i in range(5)])
+                    return [("5D", f"{total}", rows_str)]
+    
+    return []
+
+# =============================================================================
+# PATTERN TRACER (UNCHANGED - PERFECT)
+# =============================================================================
+ 
+def find_consistent_patterns(grid, pattern, group_start_col=0, pattern_type="ALL"):
+    rows, cols = grid.shape
+    
+    directions = {
+        "RIGHT": (0, 1), "DOWN": (1, 0), "DOWN_RIGHT": (1, 1), "DOWN_LEFT": (1, -1),
+        "STAG_DOWN": (2, 0), "STAG_RIGHT": (0, 2), "STAG_DR": (2, -1), "STAG_DL": (2, 1)
+    }
+    
+    matches = []
+    unique_patterns = {}
+    allowed_types = ["SINGLE", "VERT", "HORZ", "2DIG", "3D", "4D", "5D"] if pattern_type == "ALL" else [pattern_type]
+    
+    for p_type in allowed_types:
+        for start_r in range(rows):
+            for start_c in range(cols):
+                for dir_name, (dr, dc) in directions.items():
+                    sequence = []
+                    cells = []
+                    valid = True
+                    
+                    for step in range(len(pattern)):
+                        r = start_r + step * dr
+                        c = start_c + step * dc
+                        
+                        if not (0 <= r < rows and 0 <= c < cols):
+                            valid = False
+                            break
+                        
+                        possibilities = check_pattern_type(grid, r, c, pattern[step], group_start_col, p_type)
+                        if not possibilities:
+                            valid = False
+                            break
+                        
+                        cell_ref = possibilities[0][2]
+                        cells.append(cell_ref)
+                        sequence.append(possibilities[0])
+                    
+                    if valid and len(sequence) == len(pattern):
+                        pattern_key = "_".join(sorted(cells))
+                        if pattern_key not in unique_patterns:
+                            unique_patterns[pattern_key] = True
+                            dir_sym = dir_symbol(dir_name)
+                            nd_label = p_type  # SINGLE, VERT, HORZ, 2DIG, 3D, 4D, 5D
+
+                            # Normalize naming to proper ND labels
+                            if nd_label in ["SINGLE"]:
+                                nd_value = "1D"
+                            elif nd_label in ["VERT", "HORZ", "2DIG"]:
+                                nd_value = "2D"
+                            else:
+                                nd_value = nd_label  # 3D / 4D / 5D
+                            
+                            match_str = f"{dir_sym} : {', '.join(cells)}"
+                            matches.append((dir_sym, nd_value, match_str))
+    
+    return matches
+
+# =============================================================================
+# MASTER ENGINE (UNCHANGED)
+# =============================================================================
+ 
+def find_all_patterns(grid, pattern, group_start_col=0, pattern_type="ALL"):
+    forward = find_consistent_patterns(grid, pattern, group_start_col, pattern_type)
+    reverse = find_consistent_patterns(grid, pattern[::-1], group_start_col, pattern_type)
+    return forward + reverse
+
+# =============================================================================
+# MAIN EXECUTION (UNCHANGED OUTPUT FORMAT)
+# =============================================================================
+ 
+all_results = {}
+excel_output_rows = []
+
+for file_key, path in excel_files.items():
+    try:
+        print(f"\\n✅ Loading {file_key}: {path}")
+        df = pd.read_excel(path, header=None, dtype=None, keep_default_na=False)
+        df_data = df.iloc[DATA_START_ROW:DATA_START_ROW+ROWS_TO_MATCH, :].reset_index(drop=True)
+        df_data = df_data.dropna(how='all')
+        grid = df_data.values
+        
+        print(f"✅ {file_key}: Grid {grid.shape[0]}x{grid.shape[1]}")
+        
+        all_results[file_key] = {}
+        for group_name, (group_start_col, end_col) in groups.items():
+            print(f"PROCESSING {group_name} with group_start_col={group_start_col}")
+            group_grid = grid[:, group_start_col:end_col+1]
+            matches = find_all_patterns(group_grid, pattern, group_start_col, PATTERN_TYPE_FILTER)
+            
+            all_results[file_key][group_name] = matches
+            
+            for direction, nd_value, match_str in matches:
+                cells_part = match_str.split(" : ")[1] if " : " in match_str else match_str
+                excel_output_rows.append({
+                    "File": file_key,
+                    "Group": group_name,
+                    "Dir": direction,
+                    "ND": nd_value,
+                    "Match": cells_part
+                })
+                
+    except Exception as e:
+        print(f"❌ Error processing {file_key}: {e}")
+
+# =============================================================================
+# CONSOLE SUMMARY (UNCHANGED)
+# =============================================================================
+ 
+print(f"\\n{'='*80}")
+print("MATCH SUMMARY")
+print(f"{'='*80}")
+
+for file_key, group_dict in all_results.items():
+
+    print(f"\\n📂 FILE: {file_key}")
+
+    for group_name, matches in group_dict.items():
+        count = len(matches)
+        print(f"  └─ {group_name}: {count} matches")
+
+        if count > 0:
+            for i, match in enumerate(matches[:3], 1):
+
+                # match structure = (direction, nd_value, match_str)
+                direction = match[0]
+                nd_value = match[1]
+                match_str = match[2]
+
+                print(f"     {i}. [{direction} | {nd_value}] {match_str}")
+
+print(f"\\n{'='*80}")
+
+# =============================================================================
+# EXCEL OUTPUT (UNCHANGED FORMAT + ND COLUMN)
+# =============================================================================
+ 
+# =============================================================================
+# EXCEL OUTPUT (v16 FINAL CLEAN STRUCTURE)
+# =============================================================================
+
+date_str = datetime.today().strftime("%d_%m")
+time_str = datetime.today().strftime("%H%M")
+
+if excel_output_rows:
+
+    output_df = pd.DataFrame(excel_output_rows)
+
+    # ND priority (5D strongest)
+    nd_priority = {
+        "5D": 1,
+        "4D": 2,
+        "3D": 3,
+        "2D": 4,
+        "1D": 5
+    }
+
+    # Group priority (custom order)
+    group_priority = {
+        "U": 1,
+        "L": 2,
+        "P": 3,
+        "M": 4,
+        "OP": 5,
+        "OM": 6
+    }
+
+    for file_key in excel_files.keys():
+
+        file_data = output_df[output_df["File"] == file_key].copy()
+
+        if file_data.empty:
+            continue
+
+        # ---------- SORTING HAPPENS HERE ----------
+        file_data["GROUP_ORDER"] = file_data["Group"].map(group_priority)
+        file_data["ND_ORDER"] = file_data["ND"].map(nd_priority)
+
+        file_data = file_data.sort_values(
+            by=["GROUP_ORDER", "ND_ORDER"],
+            ascending=[True, True]
+        )
+
+        file_data = file_data.drop(columns=["GROUP_ORDER", "ND_ORDER"])
+        file_data = file_data.reset_index(drop=True)
+        # ------------------------------------------
+
+        output_filename = f"PATTERN_RSLT_{file_key}_{date_str}_{time_str}.xlsx"
+        output_path = rf"D:\\\\TM_HM\\\\{file_key}\\\\{output_filename}"
+
+        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+            file_data.to_excel(
+                writer,
+                sheet_name=f"PATTERN_RSLT_{file_key}_{date_str}_{time_str}",
+                index=False
+            )
+
+        print(f"✅ {file_key}: {len(file_data)} results → {output_filename}")
+
+else:
+    print("\\n⚠️  No results to export")
+
+print(f"\\n{'='*80}")
+print("✨ GRID v15.11 + 3D/4D/5D - ALL PATTERNS ACTIVE!")
+print(f"{'='*80}")
+
+
+
